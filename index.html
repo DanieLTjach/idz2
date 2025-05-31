@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Лабораторна робота 7 - з логуванням</title>
+    <style>
+        .result-container {
+            margin-top: 10px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            min-height: 50px;
+        }
+        .location-status {
+            background-color: #f0f8ff;
+            padding: 5px;
+            margin: 10px 0;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .error {
+            color: red;
+        }
+        .success {
+            color: green;
+        }
+    </style>
+</head>
+<body>
+    <div class="location-status" id="locationStatus">
+        Визначення місцезнаходження...
+    </div>
+
+    <div>
+        <h3>The number of subordinates of each chief</h3>
+        <form id="subordinatesForm">
+            <input type="text" name="chief_name" placeholder="Name chief" required>
+            <button type="submit">Enter</button>
+        </form>
+        <div id="subordinatesResult" class="result-container">Results will appear here...</div>
+    </div>
+    
+    <div>
+        <h3>Total time spent on the selected project</h3>
+        <form id="projectTimeForm">
+            <input type="text" name="project_name" placeholder="Project name" required>
+            <button type="submit">Enter</button>
+        </form>
+        <div id="projectTimeResult" class="result-container">Results will appear here...</div>
+    </div>
+    
+    <div>
+        <h3>Information on completed tasks for the specified project on the selected date</h3>
+        <form id="tasksForm">
+            <input type="text" name="project_name" placeholder="Name project" required>
+            <input type="date" name="task_date" required>
+            <button type="submit">Enter</button>
+        </form>
+        <div id="tasksResult" class="result-container">Results will appear here...</div>
+    </div>
+
+    <script>
+        let userPosition = {
+            latitude: null,
+            longitude: null,
+            accuracy: null,
+            timestamp: null
+        };
+
+        function getCurrentPosition() {
+            const statusElement = document.getElementById('locationStatus');
+            
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        userPosition = {
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                            accuracy: position.coords.accuracy,
+                            timestamp: new Date().toISOString()
+                        };
+                        statusElement.innerHTML = `<span class="success">Координати визначено: ${userPosition.latitude.toFixed(6)}, ${userPosition.longitude.toFixed(6)}</span>`;
+                    },
+                    function(error) {
+                        let errorMessage = 'Помилка визначення координат: ';
+                        switch(error.code) {
+                            case error.PERMISSION_DENIED:
+                                errorMessage += 'доступ заборонено користувачем';
+                                break;
+                            case error.POSITION_UNAVAILABLE:
+                                errorMessage += 'координати недоступні';
+                                break;
+                            case error.TIMEOUT:
+                                errorMessage += 'перевищено час очікування';
+                                break;
+                            default:
+                                errorMessage += 'невідома помилка';
+                                break;
+                        }
+                        statusElement.innerHTML = `<span class="error">${errorMessage}</span>`;
+                    },
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 300000
+                    }
+                );
+            } else {
+                statusElement.innerHTML = '<span class="error">Geolocation не підтримується цим браузером</span>';
+            }
+        }
+
+        function getBrowserInfo() {
+            return {
+                userAgent: navigator.userAgent,
+                language: navigator.language,
+                platform: navigator.platform,
+                cookieEnabled: navigator.cookieEnabled,
+                screenWidth: screen.width,
+                screenHeight: screen.height,
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                viewport: {
+                    width: window.innerWidth,
+                    height: window.innerHeight
+                }
+            };
+        }
+
+        function createLogData(requestType, formData) {
+            const now = new Date();
+            const browserInfo = getBrowserInfo();
+            
+            return {
+                request_time: now.toISOString(),
+                request_type: requestType,
+                browser_info: JSON.stringify(browserInfo),
+                user_agent: navigator.userAgent,
+                latitude: userPosition.latitude,
+                longitude: userPosition.longitude,
+                location_accuracy: userPosition.accuracy,
+                request_data: JSON.stringify(Object.fromEntries(formData.entries())),
+                session_id: getSessionId()
+            };
+        }
+
+        function getSessionId() {
+            let sessionId = sessionStorage.getItem('ajax_session_id');
+            if (!sessionId) {
+                sessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                sessionStorage.setItem('ajax_session_id', sessionId);
+            }
+            return sessionId;
+        }
+
+        function logRequest(logData) {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', 'log_request.php', true);
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.send(JSON.stringify(logData));
+        }
+
+        window.addEventListener('load', function() {
+            getCurrentPosition();
+        });
+
+        document.getElementById('subordinatesForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const logData = createLogData('subordinates', formData);
+
+            logRequest(logData);
+            
+            const xhr = new XMLHttpRequest();
+            
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4 && xhr.status === 200) {
+                    document.getElementById('subordinatesResult').innerHTML = xhr.responseText;
+                }
+            };
+            
+            xhr.open('POST', 'subordinates_ajax.php', true);
+            xhr.send(formData);
+        });
+
+        document.getElementById('projectTimeForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const logData = createLogData('project_time', formData);
+
+            logRequest(logData);
+            
+            const xhr = new XMLHttpRequest();
+            
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4 && xhr.status === 200) {
+                    const xmlResponse = xhr.responseXML;
+                    const timeSpent = xmlResponse.getElementsByTagName('time_spent')[0].textContent;
+                    const projectName = xmlResponse.getElementsByTagName('project_name')[0].textContent;
+                    
+                    let resultHTML = '<div>Project: ' + projectName + '</div>';
+                    resultHTML += '<div>Total time spent: ' + timeSpent + ' days</div>';
+                    
+                    document.getElementById('projectTimeResult').innerHTML = resultHTML;
+                }
+            };
+            
+            xhr.open('POST', 'project_time_ajax.php', true);
+            xhr.send(formData);
+        });
+
+        document.getElementById('tasksForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const logData = createLogData('tasks', formData);
+
+            logRequest(logData);
+            
+            fetch('tasks_ajax.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                let resultHTML = '';
+                
+                if (data.length > 0) {
+                    resultHTML = '<table border="1">';
+                    resultHTML += '<tr><th>Worker</th><th>Project</th><th>Start Time</th><th>End Time</th><th>Description</th></tr>';
+                    
+                    data.forEach(row => {
+                        resultHTML += '<tr>';
+                        resultHTML += '<td>' + row.FID_Worker + '</td>';
+                        resultHTML += '<td>' + row.FID_Projects + '</td>';
+                        resultHTML += '<td>' + row.time_start + '</td>';
+                        resultHTML += '<td>' + row.time_end + '</td>';
+                        resultHTML += '<td>' + row.description + '</td>';
+                        resultHTML += '</tr>';
+                    });
+                    
+                    resultHTML += '</table>';
+                } else {
+                    resultHTML = '<div>No tasks found.</div>';
+                }
+                
+                document.getElementById('tasksResult').innerHTML = resultHTML;
+            })
+            .catch(error => {
+                document.getElementById('tasksResult').innerHTML = 'Error: ' + error.message;
+            });
+        });
+
+        setInterval(getCurrentPosition, 300000);
+    </script>
+</body>
+</html>
